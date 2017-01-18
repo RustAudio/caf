@@ -13,6 +13,8 @@ An Apple Core Audio Format (CAF) container decoder
 For more information on CAF, see its [wiki page](https://en.wikipedia.org/wiki/Core_Audio_Format), and the [official specification](https://developer.apple.com/documentation/MusicAudio/Reference/CAFSpec/).
 */
 
+#![forbid(unsafe_code)]
+
 extern crate byteorder;
 extern crate ieee754;
 
