@@ -1,0 +1,13 @@
+[package]
+name = "caf"
+version = "0.1.0"
+authors = ["est31 <MTest31@outlook.com>"]
+description = "Pure rust Core Audio Format container decoder"
+license = "MIT/Apache-2.0"
+keywords = ["coreaudio", "apple"]
+repository = "https://github.com/RustAudio/caf"
+readme = "README.md"
+
+[dependencies]
+byteorder = "1.0"
+ieee754 = "0.2"
