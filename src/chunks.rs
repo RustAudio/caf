@@ -104,19 +104,14 @@ pub fn decode_chunk(chunk_type :ChunkType, mut chunk_content :Vec<u8>)
 	use byteorder::BigEndian as Be;
 	use byteorder::ReadBytesExt;
 	use std::io::{Cursor, BufRead};
-	use ieee754::Ieee754;
 	// ReaD with big endian order and Try
 	macro_rules! rdt {
 		($rdr:ident, $func:ident) => { try!($rdr.$func::<Be>()) }
 	}
-	macro_rules! rd_fl_32 {
-		($rdr:ident) => { f32::from_bits(try!($rdr.read_u32::<Be>())) }
-	}
 	match chunk_type {
 			ChunkType::AudioDescription => {
 				let mut rdr = Cursor::new(&chunk_content);
-				let sample_rate_u = rdr.read_u64::<Be>().unwrap();
-				let sample_rate = f64::from_bits(sample_rate_u);
+				let sample_rate = rdr.read_f64::<Be>().unwrap();
 				Ok(CafChunk::Desc(AudioDescription {
 					sample_rate : sample_rate,
 					format_id : FormatType::from(rdr.read_u32::<Be>().unwrap()),
@@ -170,8 +165,8 @@ pub fn decode_chunk(chunk_type :ChunkType, mut chunk_content :Vec<u8>)
 					descs.push(ChannelDescription {
 						channel_label : rdt!(rdr, read_u32),
 						channel_flags : rdt!(rdr, read_u32),
-						coordinates : (rd_fl_32!(rdr), rd_fl_32!(rdr),
-							rd_fl_32!(rdr)),
+						coordinates : (rdt!(rdr, read_f32),
+							rdt!(rdr, read_f32), rdt!(rdr, read_f32)),
 					});
 				}
 				Ok(CafChunk::ChanLayout(ChannelLayout {

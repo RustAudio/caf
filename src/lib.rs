@@ -16,7 +16,6 @@ For more information on CAF, see its [wiki page](https://en.wikipedia.org/wiki/C
 #![forbid(unsafe_code)]
 
 extern crate byteorder;
-extern crate ieee754;
 
 pub mod chunks;
 mod enums;

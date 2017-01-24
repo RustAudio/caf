@@ -10,4 +10,3 @@ readme = "README.md"
 
 [dependencies]
 byteorder = "1.0"
-ieee754 = "0.2"
