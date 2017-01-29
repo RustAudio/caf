@@ -224,9 +224,11 @@ impl<T> CafChunkReader<T> where T :Read + Seek {
 	}
 }
 
-/// High level Packet reading
-///
-/// Provides an iterator over CAF packets. That's very high level.
+/**
+High level Packet reading
+
+Provides a very convenient iterator over the packets of the audio chunk.
+*/
 pub struct CafPacketReader<T> where T :Read + Seek {
 	ch_rdr :CafChunkReader<T>,
 	pub audio_desc :chunks::AudioDescription,
@@ -381,6 +383,12 @@ impl<T> CafPacketReader<T> where T :Read + Seek {
 		return self.audio_desc.bytes_per_packet != 0;
 	}
 	/// Returns the size of the next packet in bytes.
+	///
+	/// Returns None if all packets were read,
+	/// Some(_) otherwise.
+	///
+	/// Very useful if you want to allocate the packet
+	/// slice yourself.
 	pub fn next_packet_size(&self) -> Option<usize> {
 		let res = match self.audio_desc.bytes_per_packet {
 			0 => match self.packet_table.as_ref()
@@ -402,7 +410,7 @@ impl<T> CafPacketReader<T> where T :Read + Seek {
 			Some(res)
 		}
 	}
-	/// Read one packet from the audio chunk.
+	/// Read one packet from the audio chunk
 	///
 	/// Returns Ok(Some(v)) if the next packet could be read successfully,
 	/// Ok(None) if its the last chunk.
@@ -417,5 +425,65 @@ impl<T> CafPacketReader<T> where T :Read + Seek {
 		self.packet_idx += 1;
 		self.audio_chunk_offs += next_packet_size as i64;
 		return Ok(Some(arr));
+	}
+	/// Read one packet from the audio chunk into a pre-allocated array
+	///
+	/// The method doesn't check whether the size of the passed slice matches
+	/// the actual next packet length, it uses the length blindly.
+	/// For correct operation, only use sizes returned from the
+	/// `next_packet_size` function, and only if it didn't return `None`.
+	pub fn read_packet_into(&mut self, data :&mut [u8]) -> Result<(), CafError> {
+		try!(self.ch_rdr.rdr.read_exact(data));
+		self.packet_idx += 1;
+		self.audio_chunk_offs += data.len() as i64;
+		return Ok(());
+	}
+
+	/// Gets the number of packets if its known.
+	pub fn get_packet_count(&self) -> Option<usize> {
+		match &self.packet_table {
+			&Some(ref t) => Some(t.lengths.len()),
+			&None => match self.audio_desc.bytes_per_packet {
+				// We are supposed to never reach this as the constructor
+				// should enforce a packet table to be present if the
+				// number of bytes per packet is unspecified.
+				0 => panic!("No packet table was stored by the constructor"),
+				// If the length of the audio chunk is unspecified,
+				// and there is no packet table,
+				// we won't know the count of packets.
+				_ if self.audio_chunk_len == -1 => None,
+				v => Some((self.audio_chunk_len as usize - 4) / v as usize),
+			},
+		}
+	}
+
+	/// Returns the index of the currently read packet
+	pub fn get_packet_idx(&self) -> usize {
+		self.packet_idx
+	}
+
+	/// Seeks to the packet with the given index
+	///
+	/// This function never has been tested.
+	/// If there are bugs please report them.
+	pub fn seek_to_packet(&mut self, packet_idx :usize) -> Result<(), CafError> {
+
+		let min_idx = ::std::cmp::min(self.packet_idx, packet_idx);
+		let max_idx = ::std::cmp::min(self.packet_idx, packet_idx);
+
+		// The amount we need to seek by.
+		let offs :i64 = match self.audio_desc.bytes_per_packet {
+			0 => self.packet_table.as_ref()
+				.unwrap().lengths[min_idx..max_idx].iter().map(|v| *v as i64).sum(),
+			v => (max_idx - min_idx) as i64 * v as i64,
+		};
+		if self.packet_idx < packet_idx {
+			try!(self.ch_rdr.rdr.seek(SeekFrom::Current(offs)));
+		} else if self.packet_idx > packet_idx {
+			try!(self.ch_rdr.rdr.seek(SeekFrom::Current(-offs)));
+		} else {
+			// No seek needed
+		}
+		Ok(())
 	}
 }
