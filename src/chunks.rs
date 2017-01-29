@@ -19,6 +19,7 @@ use ::ChunkType;
 use ::FormatType;
 
 /// A decoded CAF chunk header
+#[derive(Debug, Clone)]
 pub struct CafChunkHeader {
 	pub ch_type :ChunkType,
 	/// The size of the chunk's content (without the head) in bytes.
@@ -32,7 +33,7 @@ pub struct CafChunkHeader {
 /// An in-memory CAF chunk.
 ///
 /// The list represents the chunk types we can parse.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CafChunk {
 	Desc(AudioDescription),
 	AudioDataInMemory(u32, Vec<u8>),
@@ -44,7 +45,21 @@ pub enum CafChunk {
 	// ...
 }
 
-#[derive(Debug)]
+impl CafChunk {
+	pub fn get_type(&self) -> ChunkType {
+		use ChunkType::*;
+		match self {
+			&CafChunk::Desc(..) => AudioDescription,
+			&CafChunk::AudioDataInMemory(..) => AudioData,
+			&CafChunk::PacketTable(..) => PacketTable,
+			&CafChunk::ChanLayout(..) => ChannelLayout,
+			&CafChunk::MagicCookie(..) => MagicCookie,
+			&CafChunk::Info(..) => Info,
+		}
+	}
+}
+
+#[derive(Debug, Clone)]
 pub struct AudioDescription {
 	pub sample_rate :f64,
 	pub format_id :FormatType,
@@ -56,7 +71,7 @@ pub struct AudioDescription {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PacketTable {
 	pub num_valid_frames :i64,
 	pub num_priming_frames :i32,
@@ -64,7 +79,7 @@ pub struct PacketTable {
 	pub lengths :Vec<u64>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ChannelLayout {
 	// TODO enrich this one and the one below with some meaning
 	// e.g. we'll maybe need some other representation, like an enum?
@@ -73,7 +88,7 @@ pub struct ChannelLayout {
 	pub channel_descriptions :Vec<ChannelDescription>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ChannelDescription {
 	pub channel_label :u32,
 	pub channel_flags :u32,

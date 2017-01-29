@@ -50,7 +50,7 @@ mod chunk_types {
 /// and that users may add their own unofficial chunk types
 /// from outside of the reserved range of chunks.
 /// Those chunk types are represented by the `Other` variant.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChunkType {
 	/// mChunkType for the "Audio Description" chunk
 	AudioDescription,
@@ -148,7 +148,7 @@ mod format_types {
 /// defined by the spec.
 ///
 /// The spec explicitly says that the list is not exhaustive.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum FormatType {
 	/// mFormatID for Linear PCM
 	LinearPcm,

@@ -161,4 +161,261 @@ impl<T> CafChunkReader<T> where T :Read + Seek {
 		try!(self.rdr.seek(SeekFrom::Current(-hdr.ch_size)));
 		Ok(())
 	}
+
+	/**
+	Read chunks from a whitelist to memory
+
+	Uses the given `CafChunkReader` to read all chunks to memory
+	whose types are inside the `content_read` slice.
+	Stops as soon as all chunk were encountered with types in the
+	`required` argument list.
+
+	As we don't have support for reading chunks with unspecified length,
+	you shouldn't use this function to read audio data to memory.
+	Generally, reading the audio data chunk to memory is a bad idea
+	as it may possibly be very big. Instead, use the nice high level
+	`CafPacketReader` struct.
+	*/
+	pub fn read_chunks_to_mem(&mut self,
+			mut required :Vec<ChunkType>, content_read :&[ChunkType])
+			-> Result<(Vec<CafChunk>, Vec<CafChunkHeader>), CafError> {
+		let mut res = Vec::with_capacity(content_read.len());
+		let mut read_headers = Vec::new();
+		loop {
+			let hdr = try!(self.read_chunk_header());
+			let mut required_idx = None;
+			let mut content_read_found = false;
+			for (i, &searched_type) in required.iter().enumerate() {
+				if searched_type == hdr.ch_type {
+					required_idx = Some(i);
+					break;
+				}
+			}
+			for &searched_type in content_read.iter() {
+				if searched_type == hdr.ch_type {
+					content_read_found = true;
+					break;
+				}
+			}
+			if hdr.ch_size == -1 {
+				// TODO: return an error.
+				/*
+				We don't support chunks with unspecified (=-1) length.
+				Reading such a chunk to memory would be a bad idea as they
+				can possibly be gigantic, and are only used for the audio chunk,
+				which is a very uninteresting target to be read to memory anyways.
+				Also, such chunks are only found at the end of the file, and if we
+				encounter them it means we didn't find the chunks we searched for.
+				*/
+			}
+
+			match required_idx { None => (), Some(i) => { required.remove(i); } }
+			if content_read_found {
+				res.push(try!(self.read_chunk_body(&hdr)));
+			} else {
+				try!(self.to_next_chunk(&hdr));
+			}
+			read_headers.push(hdr.clone());
+			if required.len() == 0 {
+				break;
+			}
+		}
+		Ok((res, read_headers))
+	}
+}
+
+/// High level Packet reading
+///
+/// Provides an iterator over CAF packets. That's very high level.
+pub struct CafPacketReader<T> where T :Read + Seek {
+	ch_rdr :CafChunkReader<T>,
+	pub audio_desc :chunks::AudioDescription,
+	pub packet_table :Option<chunks::PacketTable>,
+	pub chunks :Vec<CafChunk>,
+	/// The edit count value stored in the audio chunk.
+	pub edit_count :u32,
+	audio_chunk_len :i64,
+	audio_chunk_offs :i64,
+	packet_idx :usize,
+}
+
+impl<T> CafPacketReader<T> where T :Read + Seek {
+	/// Creates a new CAF packet reader struct from a given reader.
+	///
+	/// With the `filter_by` argument you can pass a list of chunk types
+	/// that are important for you. You shouldn't specify three chunk
+	/// types though: `AudioData`, `AudioDescription` and `PacketTable`.
+	/// These are implicitly retrieved, and you can extract the content
+	/// through iterating over the packets (which are all small parts of
+	/// the `AudioData` chunk), and through the `audio_desc` and `packet_table`
+	/// members.
+	///
+	/// Equal to calling `CafChunkReader::new` and passing its result to
+	/// `from_chunk_reader`.
+	pub fn new(rdr :T, filter_by :Vec<ChunkType>) -> Result<Self, CafError> {
+		let ch_rdr = try!(CafChunkReader::new(rdr));
+		return CafPacketReader::from_chunk_reader(ch_rdr, filter_by);
+	}
+
+	/// Creates a new CAF packet reader struct from a given chunk reader.
+	///
+	/// With the `filter_by` argument you can pass a list of chunk types
+	/// that are important for you. You shouldn't specify three chunk
+	/// types though: `AudioData`, `AudioDescription` and `PacketTable`.
+	/// These are implicitly retrieved, and you can extract the content
+	/// through iterating over the packets (which are all small parts of
+	/// the `AudioData` chunk), and through the `audio_desc` and `packet_table`
+	/// members.
+	pub fn from_chunk_reader(mut ch_rdr :CafChunkReader<T>,
+			mut filter_by :Vec<ChunkType>) -> Result<Self, CafError> {
+
+		// 1. Read all the chunks we need to memory
+		filter_by.push(ChunkType::AudioDescription);
+		let mut content_read = filter_by.clone();
+		content_read.push(ChunkType::PacketTable);
+		let (mut chunks_in_mem, mut read_headers) =
+			try!(ch_rdr.read_chunks_to_mem(filter_by, &content_read));
+
+		// 2. Extract the special chunks we will need later on
+		let mut audio_desc_idx = None;
+		let mut packet_table_idx = None;
+		for (idx, ch) in chunks_in_mem.iter().enumerate() {
+			use ChunkType::*;
+			//println!("{:?}", ch.get_type());
+			match ch.get_type() {
+				AudioDescription => (audio_desc_idx = Some(idx)),
+				PacketTable => (packet_table_idx = Some(idx)),
+				_ => (),
+			}
+		}
+		macro_rules! remove_and_unwrap {
+			($idx:expr, $id:ident) => {
+				match chunks_in_mem.remove($idx) {
+					CafChunk::$id(v) => v,
+					_ => panic!(),
+				}
+			}
+		}
+		let audio_desc = remove_and_unwrap!(audio_desc_idx.unwrap(), Desc);
+		let p_table_required = audio_desc.bytes_per_packet == 0 ||
+			audio_desc.frames_per_packet == 0;
+		let packet_table = match packet_table_idx {
+			Some(i) => Some(remove_and_unwrap!(i, PacketTable)),
+			None if p_table_required => {
+				let (chunks, hdrs) =  try!(ch_rdr.read_chunks_to_mem(
+						vec![ChunkType::PacketTable],
+						&content_read));
+				chunks_in_mem.extend_from_slice(&chunks);
+				read_headers.extend_from_slice(&hdrs);
+				for (idx, ch) in chunks_in_mem.iter().enumerate() {
+					use ChunkType::*;
+					match ch.get_type() {
+						PacketTable => (packet_table_idx = Some(idx)),
+						_ => (),
+					}
+				}
+				Some(remove_and_unwrap!(packet_table_idx.unwrap(), PacketTable))
+			},
+			// Only reaches this if p_table_required == false
+			None => None,
+		};
+
+		// 3. Navigate to audio chunk position.
+		// Check whether we already read the audio block.
+		// If yes, calculate the amount to seek back to get to it.
+		let mut audio_chunk_len = 0;
+		let mut seek_backwards = 0;
+		const HEADER_LEN :i64 = 12;
+		for hdr in read_headers.iter() {
+			if seek_backwards > 0 || hdr.ch_type == ChunkType::AudioData {
+				seek_backwards += HEADER_LEN;
+				seek_backwards += hdr.ch_size;
+			}
+			if hdr.ch_type == ChunkType::AudioData {
+				audio_chunk_len = hdr.ch_size;
+			}
+		}
+		if seek_backwards != 0 {
+			// We already skipped the audio chunk once.
+			// Seek back to it, and we are done.
+			seek_backwards -= HEADER_LEN;
+			//println!("seek_backwards: {}", seek_backwards);
+			try!(ch_rdr.rdr.seek(SeekFrom::Current(-(seek_backwards as i64))));
+		} else {
+			// The audio chunk is ahead of us. Seek towards it.
+			loop {
+				let ch_hdr = try!(ch_rdr.read_chunk_header());
+				if ch_hdr.ch_type == ChunkType::AudioData {
+					audio_chunk_len = ch_hdr.ch_size;
+					break;
+				} else {
+					try!(ch_rdr.to_next_chunk(&ch_hdr));
+				}
+			}
+		}
+		// 4. Read the edit count
+		let edit_count = {
+			use byteorder::{ReadBytesExt, BigEndian};
+			try!(ch_rdr.rdr.read_u32::<BigEndian>())
+		};
+		// 5. Return the result
+		Ok(CafPacketReader {
+			ch_rdr : ch_rdr,
+			audio_desc : audio_desc,
+			packet_table : packet_table,
+			chunks : chunks_in_mem,
+			edit_count : edit_count,
+			audio_chunk_len : audio_chunk_len,
+			audio_chunk_offs : 4, // 4 bytes for the edit count.
+			packet_idx : 0,
+		})
+	}
+	pub fn into_inner(self) -> CafChunkReader<T> {
+		self.ch_rdr
+	}
+	/// Returns whether the size of the packets doesn't change
+	///
+	/// Some formats have a constant, not changing packet size
+	/// (mostly the uncompressed ones).
+	pub fn packet_size_is_constant(&self) -> bool {
+		return self.audio_desc.bytes_per_packet != 0;
+	}
+	/// Returns the size of the next packet in bytes.
+	pub fn next_packet_size(&self) -> Option<usize> {
+		let res = match self.audio_desc.bytes_per_packet {
+			0 => match self.packet_table.as_ref()
+					.unwrap().lengths.get(self.packet_idx) {
+				Some(v) => *v as usize,
+				None => return None,
+			},
+			v => v as usize,
+		};
+		if self.audio_chunk_len != -1 &&
+				self.audio_chunk_offs + res as i64 > self.audio_chunk_len {
+			// We would read outside of the chunk.
+			// In theory this is a format error as the packet table is not
+			// supposed to have such a length combination that the sum is larger
+			// than the size of the audio chunk + 4 for edit_count.
+			// But we are too lazy to return Result<...> here...
+			None
+		} else {
+			Some(res)
+		}
+	}
+	/// Read one packet from the audio chunk.
+	///
+	/// Returns Ok(Some(v)) if the next packet could be read successfully,
+	/// Ok(None) if its the last chunk.
+	pub fn next_packet(&mut self) -> Result<Option<Vec<u8>>, CafError> {
+		let next_packet_size = match self.next_packet_size() {
+			Some(v) => v,
+			None => return Ok(None),
+		};
+
+		let mut arr = vec![0; next_packet_size];
+		try!(self.ch_rdr.rdr.read_exact(&mut arr));
+		self.packet_idx += 1;
+		self.audio_chunk_offs += next_packet_size as i64;
+		return Ok(Some(arr));
+	}
 }
