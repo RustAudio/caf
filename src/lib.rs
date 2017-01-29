@@ -19,41 +19,20 @@ extern crate byteorder;
 
 pub mod chunks;
 mod enums;
+mod error;
 
 pub use enums::ChunkType;
 pub use enums::FormatType;
+pub use error::CafError;
 
 use chunks::CafChunk;
 use chunks::CafChunkHeader;
 
-use std::io::{Read, Seek, SeekFrom, Error as IoError};
-use std::string::FromUtf8Error;
+use std::io::{Read, Seek, SeekFrom};
 use byteorder::{BigEndian as Be, ReadBytesExt};
 
 /// The CAF file header
 const CAF_HEADER_MAGIC :[u8; 8] = [0x63, 0x61, 0x66, 0x66, 0x00, 0x01, 0x00, 0x00];
-
-#[derive(Debug)]
-pub enum CafError {
-	Io(IoError),
-	FromUtf8(FromUtf8Error),
-	/// If the given stream doesn't start with a CAF header.
-	NotCaf,
-	/// If the chunk can't be decoded because its type is not supported
-	UnsupportedChunkType(ChunkType),
-}
-
-impl From<IoError> for CafError {
-	fn from(io_err :IoError) -> Self {
-		CafError::Io(io_err)
-	}
-}
-
-impl From<FromUtf8Error> for CafError {
-	fn from(utf8_err :FromUtf8Error) -> Self {
-		CafError::FromUtf8(utf8_err)
-	}
-}
 
 pub struct CafChunkReader<T> where T :Read {
 	rdr :T,
