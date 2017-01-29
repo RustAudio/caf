@@ -2,7 +2,7 @@
 
 Decoder of Apple's [Core Audio Format](https://en.wikipedia.org/wiki/Core_Audio_Format) container. No unsafe. Pure Rust.
 
-State of implementation: WIP.
+State of implementation: usable already, but not polished (yet).
 
 ## License
 
