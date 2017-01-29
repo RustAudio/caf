@@ -148,7 +148,7 @@ mod format_types {
 /// defined by the spec.
 ///
 /// The spec explicitly says that the list is not exhaustive.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormatType {
 	/// mFormatID for Linear PCM
 	LinearPcm,
